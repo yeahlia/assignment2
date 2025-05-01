@@ -1,0 +1,262 @@
+//FOREVER MOVING!!!!! YAY
+
+let rootBranches = []; // stores the 10 original branches
+
+// SETUP ----------------------------------------------------------------------------------------------------
+
+function setup() {
+  // initializes canvas
+  createCanvas(windowWidth, windowHeight); // makes the canvas fit the browser window
+  stroke("white"); // sets stroke color to white
+  strokeWeight(2); // base stroke weight
+
+  let centreX = width / 2; // centre horizontal
+  let centreY = height / 2; // centre vertical
+
+  // loop to make 10 starting branches
+  for (let i = 0; i < 10; i++) {
+    let startAngle = random(TWO_PI); // TWEAK picks a random angle
+    let startLength = random(40, 80); // TWEAK picks a random length
+    // creates a new branch and adds it to rootBranches array
+    rootBranches.push(
+      // creates new branch starting from centre, random angle and length and the generation
+      new Branch({ x: centreX, y: centreY }, startAngle, startLength, 8, null) // TWEAK initial generation count
+    );
+  }
+}
+
+// DRAW -----------------------------------------------------------------------------------------------------
+
+// runs every frame
+function draw() {
+  background(0); // draws background and refreshes frames
+
+  let activeBranch = 0; // tracks how many branches are moving
+
+  // loops through all root branches
+  for (let b of rootBranches) {
+    b.update(); // update growth or glitch
+    b.show(); // draw the branch
+    activeBranch += b.countMoving(); // counts active branches
+  }
+
+  let idleLastBranch = []; // array for last generation branches that aren't moving
+  // loops through each root branch
+  for (let b of rootBranches) {
+    // search the deepest branches and checks if they are not moving, and adds to array
+    b.collectIdleLastBranch(idleLastBranch);
+  }
+
+  // TWEAK - if fewer than 30 branches:
+  if (activeBranch < 30) {
+    shuffle(idleLastBranch, true); // randomly shuffles through the array
+    // TWEAK activates up to 200 idle branches
+    for (let i = 0; i < min(200, idleLastBranch.length); i++) {
+      idleLastBranch[i].regrow(); // reactivates by growing or glitching
+    }
+  }
+}
+
+// BRANCH CLASS ---------------------------------------------------------------------------------------------
+
+class Branch {
+  // constructor for making a new branch
+  constructor(start, angle, targetLength, generation, parent) {
+    this.start = { x: start.x, y: start.y }; // sets the start position of the branch
+    this.end = { x: start.x, y: start.y }; // end starts at same point, will grow over time
+    this.angle = angle; // direction
+    this.targetLength = targetLength; // max length this branch will grow to
+    this.generation = generation; // generation number
+
+    this.len = 0; // how much it has currently grown
+    this.speed = random(0.3, 0.7); // TWEAK how fast it grows
+    this.shrinkSpeed = random(0.5, 1.2); // TWEAK how fast it shrinks if glitching
+
+    this.finished = false; // true when branch stops growing or glitching
+    this.childrenBranch = false; // tracks if children have been created already
+    this.branches = []; // array to store child branches
+
+    this.glitching = false; // true when branch is shrinking
+  }
+
+  // update logic
+  update() {
+    // checks if length is too short
+    if (this.targetLength < 15) {
+      this.finished = true; // mark as done
+      return; // exit
+    }
+
+    // glitching logic
+    if (this.glitching) {
+      this.len -= this.shrinkSpeed; // shrink backwards towards start point
+
+      // if fully shrunk
+      if (this.len <= 0) {
+        this.len = 0;
+
+        // reset to allow regrowth
+        this.finished = false; // starts growing again
+        this.glitching = false; // stop glitching
+        this.childrenBranch = false; // allow new children later
+
+        this.angle += random(-PI / 4, PI / 4); // TWEAK angle
+        this.speed = random(0.3, 0.7); // TWEAK growth speed
+        this.targetLength = random(40, 80); // TWEAK random length
+
+        this.end = { x: this.start.x, y: this.start.y }; // resets end position
+        // if not fully shrunk:
+      } else {
+        // update end point while its shrinking
+        this.end.x = this.start.x + cos(this.angle) * this.len;
+        this.end.y = this.start.y + sin(this.angle) * this.len;
+      }
+    }
+
+    // growing logic
+    // if not glitching and not finished, then it means branch is growing:
+    else if (!this.finished) {
+      // keep growing until it hits target length
+      if (this.len < this.targetLength) {
+        this.len += this.speed; // increase length each frame
+        this.end.x = this.start.x + cos(this.angle) * this.len; //updates end x
+        this.end.y = this.start.y + sin(this.angle) * this.len; // updates end y
+        // if done growing:
+      } else {
+        this.finished = true; // mark done
+      }
+
+      // once done growing, decide whether to make children or glitch
+      if (this.finished && !this.childrenBranch) {
+        // if not the last generation:
+        if (this.generation > 0) {
+          this.makeBranch(); // makes children
+          // if last generation:
+        } else {
+          if (random() < 0.5) {
+            // TWEAK 50% chance to glitch
+            this.startGlitch(); // start glitch
+          }
+        }
+        this.childrenBranch = true; // prevent repeating
+      }
+    }
+
+    // loops through child branches
+    for (let i = this.branches.length - 1; i >= 0; i--) {
+      let child = this.branches[i]; // stores branch based on index in variable
+      child.update(); // recursive update!! yay!!!
+    }
+  }
+
+  // add new child branches
+  makeBranch() {
+    const newChild = int(random(2, 3)); // TWEAK choose 2 or 3 children
+    let created = false; // checks if successfuly created
+
+    // loops through children
+    for (let i = 0; i < newChild; i++) {
+      const newAngle = this.angle + random(-PI / 4, PI / 4); // TWEAK angle spread
+      const newGeneration = this.generation - 1; // lowers generation
+      const spawnChance = map(this.generation, 1, 8, 0.2, 1.0); // TWEAK lower gens lowers the spawn chance
+
+      // checks if child should be created based on spawnChance variable
+      if (random() < spawnChance) {
+        const newLen = random(
+          max(10, newGeneration * 5 + 10), // TWEAK minimum length
+          newGeneration * 20 + 20 // TWEAK maximum length
+        );
+
+        // yay recursion! new branch
+        const child = new Branch(
+          { x: this.end.x, y: this.end.y }, // child starts at the end of the parent
+          newAngle, // random angle
+          newLen, // randome length
+          newGeneration, // new generation
+          this // makes it self the parent
+        );
+        this.branches.push(child); // adds new child
+        created = true; // marks branch created
+      }
+    }
+
+    // TWEAK if no childre, 50% chance it will glitch instead
+    if (!created && random() < 0.5) {
+      this.startGlitch(); // starts glitch
+    }
+  }
+
+  // glitching function
+  startGlitch() {
+    this.glitching = true;
+    this.finished = false; // allows glitching to run
+  }
+
+  // draw function for branch and its children
+  show() {
+    if (this.targetLength < 15) return; // doesnt draw too smal branches
+
+    stroke(255, map(this.generation, 0, 8, 100, 255)); // TWEAK more transparent by generation
+    strokeWeight(map(this.generation, 0, 8, 1, 3)); // TWEAK smaller by generation
+
+    line(this.start.x, this.start.y, this.end.x, this.end.y); // draws branch
+
+    // loops and draws all the children
+    for (let child of this.branches) {
+      child.show(); // draw children
+    }
+  }
+
+  // counts all moving branches (growing or glitching)
+  countMoving() {
+    // counts 1 if the branch is growing or glitching
+    let count =
+      this.glitching || (!this.finished && this.len < this.targetLength)
+        ? 1
+        : 0;
+    // loops through each child branch
+    for (let child of this.branches) {
+      count += child.countMoving(); // counts all the moving ones
+    }
+    return count; // returns all the moving branches
+  }
+
+  // gets the last child of branch
+  lastGen() {
+    if (this.branches.length === 0) return this; // if no childre, return itself
+    return this.branches[this.branches.length - 1].lastGen(); // otherwise, get last child
+  }
+
+  // collects all finished and non-glitching branches and adds to list
+  collectIdleLastBranch(done) {
+    // checks if not moving
+    if (this.branches.length === 0 && this.finished && !this.glitching) {
+      done.push(this); // if not, push to list
+    }
+    // loops through each child branch
+    for (let b of this.branches) {
+      b.collectIdleLastBranch(done); // collect from each child
+    }
+  }
+
+  // tries to regrow branch
+  regrow() {
+    // if branch is not moving:
+    if (this.finished && !this.glitching) {
+      // TWEAK 70% chance to regrow
+      if (this.len === 0 && random() < 0.7) {
+        this.finished = false; // unmark finished
+        this.childrenBranch = false; //reset so can make children
+        this.targetLength = random(40, 80); // TWEAK new target length
+        this.speed = random(0.3, 0.7); // TWEAK new speed
+        this.angle += random(-PI / 4, PI / 4); // TWEAK nee angle
+        this.end = { x: this.start.x, y: this.start.y }; // reset end point
+      }
+
+      // TWEAK 50% chance of glitch
+      else if (this.len >= this.targetLength && random() < 0.5) {
+        this.startGlitch(); // starts glitching
+      }
+    }
+  }
+}
