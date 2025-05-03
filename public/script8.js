@@ -1,37 +1,75 @@
 let colonies = []; // array for each colony
 let maxColonies = 5; // how many colonies stay on screen
 const colorPalette = ["#e7bc91", "#bc8a5f", "#8b5e34", "#6f4518", "#583101"]; // color palette
+let audioContext; // stores the audio context for sosund stuff
+let color1 = "#ffedd8"; // color 1 for background
+let color2 = "#fcf5ca"; // color 2 for background
 
 // SETUP ----------------------------------------------------------------------------------------------------
 
 // initializes canvas
 function setup() {
-  createCanvas(windowWidth, windowHeight); // makes the canvas fit the browser window
-  strokeWeight(2); // sets base stroke weight
-  spawnColony(width / 2, height / 2); // spawns first colony at center
+  createCanvas(windowWidth, windowHeight); // canvas to fit the window size
+  strokeWeight(2); // stroke weight for lines
+
+  // create AudioContext
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+  spawnColony(width / 2, height / 2); // spawns colony right in the middle
 }
 
 // DRAW -----------------------------------------------------------------------------------------------------
 
 // runs every frame
 function draw() {
-  background("#ffedd8"); // draws background and refreshes frames
+  // checks every 220 frames
+  if (frameCount % 220 === 0) {
+    let temp = color1; // temporarily stores the first color
+    color1 = color2; // sets first color to second color
+    color2 = temp; // sets the second color back to temporary first color
+  }
 
+  // maps frame count, then blends the 2 colors for a smooth transition
+  let lerpPos = map(frameCount % 220, 0, 100, 0, 1);
+  let backgroundColor = lerpColor(color(color1), color(color2), lerpPos);
+
+  background(backgroundColor); // sets the background
+
+  // draw branches
   // loops through each colony
   for (let colony of colonies) {
+    // loops through each branch of that colony
     for (let branch of colony.branches) {
-      branch.update(); // update growth or glitch
-      branch.show(colony.color, colony.alpha); // draw branch with color and transparency
+      branch.update(); // update logic
+      branch.show(colony.color, colony.alpha); // draws branch using that color
     }
   }
 
-  // if the lenggth of colonies is over the max colonies:
+  // colony limit
+  // if too many colonies on screen
   if (colonies.length > maxColonies) {
-    colonies[0].alpha -= 1; // fades the oldest colony
+    colonies[0].alpha -= 1; // fades out the oldest colony slowly
+    // when fully faded and cant see anymore
     if (colonies[0].alpha <= 0) {
-      // when transparecny reaches 0,
-      colonies.shift(); //
+      let c = colonies.shift(); // remove from array
+
+      // fades out the sound smoothly
+      c.volume.gain.exponentialRampToValueAtTime(
+        0.0001,
+        audioContext.currentTime + 1
+      );
+      c.oscillator.stop(audioContext.currentTime + 1); // stops the oscillator after 1 second
+      c.lfo.stop(audioContext.currentTime + 1); // stops LFO after 1 second
     }
+  }
+
+  // loops through all colonies
+  for (let colony of colonies) {
+    let bendAmount = map(mouseX, 0, width, -100, 100); //maps mouse to pitch bend range + or - 100Hz
+    colony.oscillator.frequency.setValueAtTime(
+      colony.baseFreq + bendAmount, // base frequency and bend
+      audioContext.currentTime
+    );
   }
 }
 
@@ -39,6 +77,10 @@ function draw() {
 
 // runs when mouse is clicked
 function mousePressed() {
+  // if audio is not playing
+  if (audioContext.state !== "running") {
+    audioContext.resume(); // resume audio
+  }
   spawnColony(mouseX, mouseY); // spawns new colony at mouse location
 }
 
@@ -46,49 +88,92 @@ function mousePressed() {
 
 // function to spawn a new colony
 function spawnColony(x, y) {
-  let colony = { branches: [], color: random(colorPalette), alpha: 255 }; // creates new colony with the values
+  let waveform = ["sine", "square", "sawtooth"]; // defines the different waveform
+  let waveformType = random(waveform); // chooses random
 
-  // loop to make 10 starting branches
+  let oscillator = audioContext.createOscillator(); // makes sound generator
+  let volume = audioContext.createGain(); // volume controller
+  let lfo = audioContext.createOscillator(); // LFO for vibrato
+  let lfoGain = audioContext.createGain(); // LFO affecting pitch
+
+  oscillator.type = waveformType; // sets up waveform shape
+  oscillator.frequency.setValueAtTime(
+    random(200, 800), // picks random base freq
+    audioContext.currentTime // sets now
+  );
+
+  volume.gain.setValueAtTime(0.05, audioContext.currentTime); // low volume
+
+  lfo.frequency.setValueAtTime(random(5, 12), audioContext.currentTime); // cibrato between 5 and 12 Hz
+  lfoGain.gain.setValueAtTime(20, audioContext.currentTime); // how fast it wiggles
+
+  lfo.connect(lfoGain); // connects LFO output to gain
+  lfoGain.connect(oscillator.frequency); //connects LFO to change pitch
+
+  oscillator.connect(volume); // oscillator to volume
+  volume.connect(audioContext.destination); // volume to speakers
+
+  oscillator.start(); // starts oscillator
+  lfo.start(); // start LFO
+
+  // create colony
+  let colony = {
+    branches: [], // holds its branches
+    color: random(colorPalette), // chooses random color from palette
+    alpha: 255, // opacity
+    oscillator: oscillator, // stores oscillator
+    volume: volume, // stores volume
+    lfo: lfo, // stores lfo
+    lfoGain: lfoGain, // stores lfo volume
+    baseFreq: oscillator.frequency.value, // base frequency for pitch shifting
+  };
+
+  // loops through 10 starting branches
   for (let i = 0; i < 10; i++) {
-    let startAngle = random(TWO_PI); // TWEAK1 picks a random angle
-    startAngle += sin(i) * 0.2; // TWEAK3 adds slight nudge to spread outward
-    let startLength = random(100, 200); // TWEAK3 makes the root branches longer
+    let startAngle = random(TWO_PI); // random starting angle
+    startAngle += sin(i) * 0.2; // wave variation
+    let startLength = random(100, 200); // random starting length
+    let swayAmount = random(0.01, 0.05); // random sway amount
+    let swayRate = random(0.01, 0.03); // random sway seed
 
-    let swayAmount = random(0.01, 0.05); // TWEAK2 how far the branch sways
-    let swayRate = random(0.01, 0.03); // TWEAK2 how fast the branch sways
-
-    let b = new Branch( // creates a new branch
-      { x: x, y: y }, // position
-      startAngle,
-      startLength,
+    // new branch
+    let b = new Branch(
+      { x: x, y: y }, // where branch starts
+      startAngle, // angle
+      startLength, // length
       8, // generation
-      null, // parent (null for root)
-      swayAmount,
-      swayRate
+      null, // parent
+      swayAmount, // sway amount
+      swayRate, // sway speed
+      colony // pass colony
     );
     colony.branches.push(b); // add branch to colony
   }
 
-  colonies.push(colony); // adds colony to colonies array
+  colonies.push(colony); // add colony ro colonies array
 }
 
 // BRANCH CLASS ---------------------------------------------------------------------------------------------
 
 class Branch {
   constructor(
-    start,
-    angle,
-    targetLength,
-    generation,
-    parent,
-    swayAmount,
-    swayRate
+    start, // start position
+    angle, // angle
+    targetLength, // tartget length
+    generation, // geneartion amount
+    parent, // parent branch
+    swayAmount, // sway amount
+    swayRate, // swayrate
+    colony // reference colony
   ) {
     this.start = { x: start.x, y: start.y }; // sets the start position of the branch
     this.end = { x: start.x, y: start.y }; // end starts at same point, will grow over time
     this.angle = angle; // direction
     this.targetLength = targetLength; // max length this branch will grow to
     this.generation = generation; // generation number
+
+    this.parent = parent; // stsore parents
+    this.colony = colony; // store colony
 
     this.len = 0; // how much it has currently grown
     this.speed = random(0.1, 1.5); // TWEAK1 how fast it grows
@@ -226,7 +311,8 @@ class Branch {
           newGeneration,
           this,
           this.swayAmount,
-          this.swayRate
+          this.swayRate,
+          this.colony
         );
         this.branches.push(child); // adds child
         created = true; // marks created
@@ -239,8 +325,23 @@ class Branch {
   }
 
   startGlitch() {
-    this.glitching = true; // start glitching
-    this.finished = false; // mark active again
+    this.glitching = true; // marks glitching
+    this.finished = false; // marks not finished
+
+    // if linked to a colony
+    if (this.colony) {
+      this.colony.lfo.frequency.setValueAtTime(
+        random(20, 50), // fast vibrato for glitch
+        audioContext.currentTime
+      );
+      setTimeout(() => {
+        // reset
+        this.colony.lfo.frequency.setValueAtTime(
+          random(5, 12), // back to softer vibrato
+          audioContext.currentTime
+        );
+      }, 300);
+    }
   }
 
   // draw branch
